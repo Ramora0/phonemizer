@@ -1,7 +1,7 @@
 from logging import Logger
 from re import Pattern
 import re
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from phonemizer.backend.espeak.espeak import EspeakBackend
 from phonemizer.backend.espeak.language_switch import LanguageSwitch
@@ -10,21 +10,20 @@ from phonemizer.backend.espeak.words_mismatch import WordMismatch
 
 class CustomEspeakBackend(EspeakBackend):
     def __init__(self, language: str,
-                 punct: Optional[str] = None,
+                 punct_regex: Optional[str] = '',
                  preserve_regex: Optional[List[str]] = [],
-                 preserve_punctuation: bool = False,
-                 with_stress: bool = False,
+                 with_stress: bool = True,
                  tie: Union[bool, str] = False,
                  language_switch: LanguageSwitch = 'keep-flags',
                  words_mismatch: WordMismatch = 'ignore',
                  logger: Optional[Logger] = None):
-        self.token = "<|begin_real_number_{index}|> {content}"
+        self.token = "<|begin_real_number|> {content}"
         self.regex = '|'.join([f'({pattern})' for pattern in preserve_regex])
 
         super().__init__(
             language,
-            punctuation_marks=punct,
-            preserve_punctuation=preserve_punctuation,
+            punctuation_marks=re.compile(punct_regex),
+            preserve_punctuation=True,
             with_stress=with_stress,
             tie=tie,
             language_switch=language_switch,
@@ -45,19 +44,13 @@ class CustomEspeakBackend(EspeakBackend):
         return post_txt
 
     def pre_process(self, txt: str, phonemize):
-        counter = [0]
-        replacements = []
+        replacements = {}
 
         def replace_match(match):
             txt = match.group(0)
-            token = self.token.format(
-                index=counter[0],
-                content=txt
-            )
-            counter[0] += 1
-            content = f"{token} {txt}"
+            content = self.token.format(content=txt)
             phoneme = phonemize([content])[0]
-            replacements.append((phoneme.strip(), txt))
+            replacements[phoneme.strip()] = txt
 
             return content
 
@@ -65,13 +58,12 @@ class CustomEspeakBackend(EspeakBackend):
 
         return processed_text, replacements
 
-    def post_process(self, phoneme: str, replacements: List[Tuple[str, str]]):
-        for replacement in replacements:
-            if replacement[0] in phoneme:
-                phoneme = phoneme.replace(
-                    replacement[0], replacement[1], 1)
+    def post_process(self, phoneme: str, replacements: Dict[str, str]):
+        for replaced, replacement in replacements.items():
+            if replaced in phoneme:
+                phoneme = phoneme.replace(replaced, replacement)
             else:
-                print(
-                    f"Replacement '{replacement[0]}' not found in '{phoneme}'")
+                raise ValueError(
+                    f"Replacement '{replaced}' not found in '{phoneme}'")
 
         return phoneme
